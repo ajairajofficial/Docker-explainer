@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Docker Really Works — and How to Actually Port Your Containers</title>
+<meta name="author" content="Ajai Raj">
+<meta name="description" content="A first-principles explainer on how Docker works and how to port containers between hosts. A product of iolinked.com.">
+<style>
+  :root{
+    --bg:#0c0f14; --surface:#131820; --border:#232a36; --ink:#d7e0ea;
+    --muted:#6b7686; --accent:#36f1a6; --accent2:#19c3ff; --warn:#ffcc66;
+    --bad:#ff5c7a; --pop:#c77dff;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    line-height:1.72; font-size:17px; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:880px; margin:0 auto; padding:64px 24px 80px}
+  h1{font-size:clamp(28px,5vw,44px); line-height:1.12; letter-spacing:-.01em;
+    margin:0 0 .35em; font-weight:800; color:#eaf3ff; text-shadow:0 0 22px rgba(54,241,166,.18);}
+  h2{font-size:1.5em; font-weight:750; margin:2.6em 0 .7em; color:#eaf3ff;
+    padding-bottom:.3em; border-bottom:1px solid var(--border);}
+  h2::before{content:"// "; color:var(--accent); font-family:var(--mono); font-size:.8em}
+  h3{font-size:1.16em; font-weight:700; margin:1.8em 0 .5em; color:var(--accent2)}
+  p{margin:0 0 1.05em}
+  a{color:var(--accent2); text-decoration:none; border-bottom:1px solid rgba(25,195,255,.35)}
+  a:hover{border-bottom-color:var(--accent2)}
+  strong{color:#fff; font-weight:700}
+  hr{border:none; border-top:1px solid var(--border); margin:2.6em 0}
+  ul,ol{margin:0 0 1.1em; padding-left:1.3em} li{margin:.4em 0} li::marker{color:var(--accent)}
+  code{font-family:var(--mono); font-size:.86em; background:#0f1722; border:1px solid var(--border);
+    border-radius:5px; padding:.1em .4em; color:#bfe9ff;}
+  pre{background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent);
+    border-radius:10px; padding:18px 20px; overflow-x:auto; margin:0 0 1.3em;}
+  pre code{background:none; border:none; padding:0; font-size:.82em; color:#cdd8e6; line-height:1.6}
+  blockquote.callout{margin:1.6em 0; padding:16px 20px; background:var(--surface);
+    border:1px solid var(--border); border-radius:10px; border-left:4px solid var(--muted);}
+  blockquote.callout p{margin:0} blockquote.callout p + p{margin-top:.6em}
+  blockquote.unlock{border-left-color:var(--accent); box-shadow:0 0 28px rgba(54,241,166,.06)}
+  blockquote.unlock strong{color:var(--accent)}
+  blockquote.warn{border-left-color:var(--warn)} blockquote.warn strong{color:var(--warn)}
+  blockquote.note{border-left-color:var(--accent2)} blockquote.note strong{color:var(--accent2)}
+  figure.viz{margin:1.8em 0 .6em; text-align:center}
+  figure.viz svg{max-width:100%; height:auto; border-radius:12px; border:1px solid var(--border)}
+  p.caption{font-size:.92em; color:var(--muted); font-style:italic; max-width:720px;
+    margin:.2em auto 2.2em; text-align:left; line-height:1.6;}
+  p.caption + p, figure.viz + p:not(.caption){margin-top:1.4em}
+  table{border-collapse:collapse; width:100%; margin:0 0 1.3em; font-size:.92em}
+  th,td{border:1px solid var(--border); padding:8px 12px; text-align:left}
+  th{background:var(--surface); color:var(--accent)}
+  .eyebrow{font-family:var(--mono); font-size:.78em; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 18px; opacity:.9;}
+  /* byline under the headline */
+  .byline{display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center;
+    margin:0 0 30px; padding:12px 0; border-top:1px solid var(--border);
+    border-bottom:1px solid var(--border); font-family:var(--mono); font-size:.82em;}
+  .byline .by{color:var(--muted); letter-spacing:.02em}
+  .byline .by .dash{color:var(--border)}
+  .byline .by strong{color:var(--accent); font-weight:700; text-shadow:0 0 12px rgba(54,241,166,.35)}
+  .byline .brand{color:var(--muted); margin-left:auto}
+  .byline .brand a{color:var(--accent2); border-bottom-color:rgba(25,195,255,.3)}
+  /* colophon at the foot */
+  .colophon{margin-top:70px; padding:34px 26px 30px; border:1px solid var(--border);
+    border-radius:16px; background:var(--surface); text-align:center;
+    box-shadow:0 0 50px rgba(54,241,166,.05);}
+  .colophon .rule{width:54px; height:2px; margin:0 auto 20px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);}
+  .colophon .sig{font-family:var(--mono); font-size:1.1em; color:var(--ink); margin:0}
+  .colophon .sig strong{color:var(--accent); font-weight:700; letter-spacing:.01em;
+    text-shadow:0 0 16px rgba(54,241,166,.4)}
+  .colophon .product{margin:.5em 0 0; color:var(--muted); font-size:.95em}
+  .colophon .product a{color:var(--accent2); border-bottom-color:rgba(25,195,255,.3)}
+  .colophon .copy{margin:1.4em 0 0; color:var(--muted); font-size:.74em;
+    font-family:var(--mono); letter-spacing:.04em; opacity:.75}
+  @media print{
+    body{background:#fff; color:#111; text-shadow:none}
+    .wrap{max-width:none} h1,h2,h3{color:#111} h2::before{color:#0a7}
+    figure.viz svg{border-color:#ccc} a{color:#06c; border:none}
+    .byline .by strong, .colophon .sig strong{color:#0a7; text-shadow:none}
+    .colophon{background:#f6f6f6; box-shadow:none}
+    pre,blockquote.callout{break-inside:avoid}
+  }
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="eyebrow">field notes &middot; containers</p>
+    <h1>How Docker Really Works — and How to Actually Port Your Containers</h1>
+<div class="byline"><span class="by">Author <span class="dash">—</span> <strong>Ajai Raj</strong></span><span class="brand">A product of <a href="https://iolinked.com">iolinked.com</a></span></div>
+<p><strong>By the end of this you'll understand what a container <em>is</em> at the kernel level, why "moving a container" is the wrong mental model, and the exact, repeatable way to lift a running service onto another host without losing your data.</strong></p>
+<figure class="viz"><svg viewBox="0 0 880 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Image versus container versus volume and what is portable">
+  <title>A container is three things — and only two of them travel</title>
+  <rect width="880" height="470" fill="#0c0f14"/>
+  <text x="40" y="46" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="22" font-weight="700" fill="#d7e0ea">A container is three things — and only two of them travel</text>
+  <text x="40" y="72" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="13.5" fill="#6b7686">To &quot;port&quot; a container you move the IMAGE and the VOLUME, then recreate the container on the new host.</text>
+
+  <!-- IMAGE panel -->
+  <rect x="40" y="100" width="240" height="330" rx="12" fill="#131820" stroke="#232a36"/>
+  <text x="60" y="132" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#d7e0ea">IMAGE</text>
+  <text x="60" y="153" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11.5" fill="#6b7686">read-only · layered · the blueprint</text>
+  <rect x="70" y="172" width="180" height="24" rx="4" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="80" y="188" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">+ config / CMD</text>
+  <rect x="70" y="202" width="180" height="24" rx="4" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="80" y="218" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">+ app code</text>
+  <rect x="70" y="232" width="180" height="24" rx="4" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="80" y="248" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">+ apt libraries</text>
+  <rect x="70" y="262" width="180" height="24" rx="4" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="80" y="278" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">base: debian</text>
+  <rect x="70" y="386" width="130" height="26" rx="13" fill="#0e2a20" stroke="#36f1a6"/>
+  <text x="135" y="403" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#36f1a6">PORTABLE</text>
+
+  <!-- CONTAINER panel -->
+  <rect x="320" y="100" width="240" height="330" rx="12" fill="#131820" stroke="#232a36"/>
+  <text x="340" y="132" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#d7e0ea">CONTAINER</text>
+  <text x="340" y="153" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11.5" fill="#6b7686">a live process, bound to THIS host</text>
+  <rect x="350" y="178" width="180" height="150" rx="10" stroke="#6b7686" stroke-dasharray="5 4" fill="none"/>
+  <text x="440" y="198" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#6b7686">host A</text>
+  <circle cx="440" cy="255" r="34" fill="#0f1722" stroke="#ffcc66" stroke-width="2"/>
+  <text x="440" y="252" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#ffcc66">PID 1</text>
+  <text x="440" y="268" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#ffcc66">postgres</text>
+  <rect x="345" y="386" width="190" height="26" rx="13" fill="#2a2410" stroke="#ffcc66"/>
+  <text x="440" y="403" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#ffcc66">RECREATE — DON'T MOVE</text>
+
+  <!-- VOLUME panel -->
+  <rect x="600" y="100" width="240" height="330" rx="12" fill="#131820" stroke="#232a36"/>
+  <text x="620" y="132" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#d7e0ea">VOLUME</text>
+  <text x="620" y="153" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11.5" fill="#6b7686">your data — outside the image</text>
+  <ellipse cx="720" cy="192" rx="58" ry="16" fill="#0f1722" stroke="#c77dff"/>
+  <path d="M662 192 V272 A58 16 0 0 0 778 272 V192" fill="#0f1722" stroke="#c77dff"/>
+  <ellipse cx="720" cy="192" rx="58" ry="16" fill="#0f1722" stroke="#c77dff"/>
+  <text x="720" y="240" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#c77dff">pgdata</text>
+  <text x="720" y="300" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" fill="#6b7686">every row lives here</text>
+  <rect x="625" y="386" width="190" height="26" rx="13" fill="#241a2e" stroke="#c77dff"/>
+  <text x="720" y="403" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#c77dff">PORTABLE (separately)</text>
+
+  <!-- connectors -->
+  <line x1="284" y1="250" x2="312" y2="250" stroke="#19c3ff" stroke-width="2"/>
+  <polygon points="312,250 304,246 304,254" fill="#19c3ff"/>
+  <text x="298" y="238" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" fill="#6b7686">mounts ro</text>
+  <line x1="592" y1="250" x2="564" y2="250" stroke="#c77dff" stroke-width="2"/>
+  <polygon points="564,250 572,246 572,254" fill="#c77dff"/>
+  <line x1="564" y1="262" x2="592" y2="262" stroke="#c77dff" stroke-width="2"/>
+  <polygon points="592,262 584,258 584,266" fill="#c77dff"/>
+  <text x="578" y="240" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" fill="#6b7686">mounts rw</text>
+</svg></figure><p class="caption">The whole idea in one picture: the image is the blueprint, the container is a live process wearing it, the volume is where your actual data lives. Two of the three move between machines. The middle one you throw away and regrow.</p>
+<hr />
+<h2>Why this matters</h2>
+<p>You've got a service running on one box — a database, an automation engine, a reverse proxy — and you need it on another box. Maybe you're outgrowing a VPS. Maybe you're splitting workloads. Maybe the cheap host is being decommissioned next Tuesday.</p>
+<p>The naïve instinct is "copy the container over." People go looking for a <code>docker move</code> command. It doesn't exist, and the reason it doesn't exist is the whole point of understanding Docker. A running container isn't a file you can copy. It's a <em>process</em> — alive, pinned to one kernel, holding open sockets and memory. You can't FedEx a running process any more than you can mail a lit candle.</p>
+<p>What you <em>can</em> move is the recipe (the image) and the ingredients you care about (the data in volumes). Get that distinction right and migration becomes a five-minute checklist. Get it wrong and you'll proudly stand up a "migrated" database on the new host — empty, because the rows were never in the image to begin with.</p>
+<p>So let's build the whole thing from the ground up, then do a real migration end to end.</p>
+<hr />
+<h2>First principles: what a container actually is</h2>
+<p>Forget everything marketing-shaped you've heard. Here's the ground truth, built up one piece at a time.</p>
+<p>A normal program on Linux is a <strong>process</strong> — an instance of running code, given a number (its <strong>PID</strong>, process ID) by the kernel, allowed to see the filesystem, the network, every other process, and as much CPU and memory as it can grab. The <strong>kernel</strong> is the core of the operating system: the single piece of software that talks to the hardware and hands out resources to everyone.</p>
+<p>A container is that same thing — an ordinary Linux process — with three modifications bolted on by the kernel:</p>
+<ol>
+<li><strong>Namespaces</strong> change what the process can <em>see</em>.</li>
+<li><strong>Control groups (cgroups)</strong> change what the process can <em>use</em>.</li>
+<li><strong>A union filesystem</strong> changes what <em>files</em> it sees as its root directory.</li>
+</ol>
+<p>That's it. No hypervisor. No guest operating system. No virtual hardware. The container shares the exact same kernel as the host and every other container on the box. When you run a container, you are running a process on your machine that has been lied to about its surroundings and put on a resource budget.</p>
+<blockquote class="callout unlock">
+<p><strong>🔓 Unlock — A container is not a tiny VM.</strong>
+A virtual machine boots a whole second operating system on emulated hardware. A container is <em>one process on your real OS</em> wearing a costume the kernel sews for it. That's why a container starts in milliseconds and a VM takes 30 seconds — there's no OS to boot. There's nothing to boot. It's already running; the kernel just fenced it off.</p>
+</blockquote>
+<h3>Namespaces — the walls (what it can see)</h3>
+<p>A <strong>namespace</strong> is a kernel feature that gives a process its own private copy of some global resource. There are several kinds, and each one hides a different slice of reality:</p>
+<ul>
+<li><strong>PID namespace</strong> — the process sees its own process numbering. Inside, your app is PID 1, the lord of its own little universe. It can't even see the host's other processes, let alone signal them.</li>
+<li><strong>Mount namespace</strong> — its own filesystem tree. The container's <code>/</code> is not the host's <code>/</code>.</li>
+<li><strong>Network namespace</strong> — its own network interfaces, IP, routing table, ports. This is why two containers can both "listen on port 5432" without colliding.</li>
+<li><strong>UTS namespace</strong> — its own hostname.</li>
+<li><strong>IPC namespace</strong> — its own inter-process communication (shared memory, semaphores).</li>
+<li><strong>User namespace</strong> — its own user IDs, so "root inside the container" can map to an unprivileged user on the host.</li>
+</ul>
+<p>The analogy: namespaces are <strong>one-way glass walls</strong>. The process inside genuinely believes it's alone in the building. It looks around and sees its own processes, its own network card, its own filesystem. The walls don't add anything — they <em>subtract</em> the rest of the world from view.</p>
+<h3>Cgroups — the meter (what it can use)</h3>
+<p>Walls stop a process from <em>seeing</em> the neighbours. They do nothing to stop it from <em>eating</em> all the food. That's the job of <strong>control groups</strong>, or <strong>cgroups</strong>: a kernel feature that caps and accounts for a process group's resource consumption — CPU time, memory, disk I/O, network bandwidth.</p>
+<p><code>--memory=256m</code> on a <code>docker run</code> isn't a suggestion. It's a cgroup limit. Cross it and the kernel's OOM (out-of-memory) killer reaps the process. This is the difference between isolation and politeness: namespaces are isolation, cgroups are the enforced budget that stops one noisy container from starving the host.</p>
+<p>The analogy: cgroups are the <strong>electricity meter with a hard breaker</strong>. You can run whatever you like in your apartment, but pull more than your allotted amps and the breaker trips. No negotiation.</p>
+<h3>Union filesystem — the layered floor (what files it sees)</h3>
+<p>A container needs a root filesystem — a <code>/</code>, a <code>/bin</code>, a <code>/etc</code>. Where does it come from? Not a fresh copy per container; that would be wasteful. It comes from the <strong>image</strong>, assembled by a <strong>union filesystem</strong> (Docker uses <strong>OverlayFS</strong>, via the <code>overlay2</code> storage driver).</p>
+<p>A union filesystem stacks several read-only directories and presents them as one merged directory. Each directory is a <strong>layer</strong>. The bottom layer might be a minimal Debian. The next adds your libraries. The next your app code. Stack them, merge them top-down, and you get a complete filesystem — without ever duplicating the shared lower layers.</p>
+<p>When the container writes a file, it doesn't touch the read-only layers. The change goes into a thin <strong>writable layer</strong> that exists only for that one running container. We'll come back to this — it's the mechanism that makes "your data isn't in the image" literally true.</p>
+<figure class="viz"><svg viewBox="0 0 880 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Anatomy of a running container">
+  <title>Anatomy of a running container: one host process, three kernel wrappers</title>
+  <rect width="880" height="540" fill="#0c0f14"/>
+  <text x="40" y="44" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#d7e0ea">Anatomy of a running container</text>
+  <text x="40" y="68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" fill="#6b7686">Strip the costume and it's just one process on the host kernel.</text>
+
+  <!-- kernel bar -->
+  <rect x="40" y="450" width="800" height="56" rx="8" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="440" y="484" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#19c3ff">LINUX KERNEL — one shared kernel · no guest OS · no hypervisor</text>
+
+  <!-- the container box -->
+  <rect x="300" y="120" width="280" height="300" rx="12" fill="#131820" stroke="#36f1a6" stroke-width="1.5"/>
+  <text x="440" y="148" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700" fill="#36f1a6">the container</text>
+  <circle cx="440" cy="222" r="44" fill="#0f1722" stroke="#d7e0ea" stroke-width="2"/>
+  <text x="440" y="218" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#d7e0ea">PID 1</text>
+  <text x="440" y="234" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#d7e0ea">postgres</text>
+  <!-- overlay strip inside -->
+  <rect x="330" y="300" width="220" height="92" rx="8" fill="#0c0f14" stroke="#232a36"/>
+  <text x="440" y="320" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#6b7686">overlayfs mount (its root /)</text>
+  <rect x="344" y="328" width="192" height="14" rx="3" fill="#241a2e" stroke="#c77dff"/>
+  <text x="350" y="339" font-family="ui-monospace, Menlo, monospace" font-size="9" fill="#c77dff">writable layer (rw)</text>
+  <rect x="344" y="346" width="192" height="12" rx="3" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="350" y="356" font-family="ui-monospace, Menlo, monospace" font-size="8.5" fill="#19c3ff">image layer (ro)</text>
+  <rect x="344" y="362" width="192" height="12" rx="3" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="350" y="372" font-family="ui-monospace, Menlo, monospace" font-size="8.5" fill="#19c3ff">image layer (ro)</text>
+
+  <!-- left: namespaces -->
+  <rect x="40" y="150" width="220" height="160" rx="10" fill="#131820" stroke="#232a36"/>
+  <text x="60" y="176" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#36f1a6">NAMESPACES</text>
+  <text x="60" y="194" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" fill="#6b7686">what it can SEE (walls)</text>
+  <text x="60" y="220" font-family="ui-monospace, Menlo, monospace" font-size="10.5" fill="#d7e0ea">pid · mount · net</text>
+  <text x="60" y="240" font-family="ui-monospace, Menlo, monospace" font-size="10.5" fill="#d7e0ea">uts · ipc · user</text>
+  <text x="60" y="272" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" fill="#6b7686">own PID 1, own IP,</text>
+  <text x="60" y="288" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" fill="#6b7686">own filesystem tree</text>
+  <line x1="260" y1="222" x2="296" y2="222" stroke="#36f1a6" stroke-width="2"/>
+  <polygon points="296,222 288,218 288,226" fill="#36f1a6"/>
+
+  <!-- right: cgroups -->
+  <rect x="620" y="150" width="220" height="160" rx="10" fill="#131820" stroke="#232a36"/>
+  <text x="640" y="176" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#ffcc66">CGROUPS</text>
+  <text x="640" y="194" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" fill="#6b7686">what it can USE (the meter)</text>
+  <text x="640" y="220" font-family="ui-monospace, Menlo, monospace" font-size="10.5" fill="#d7e0ea">cpu · memory · io</text>
+  <text x="640" y="252" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" fill="#6b7686">--memory=256m is a hard</text>
+  <text x="640" y="268" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" fill="#6b7686">cap; cross it, kernel kills it</text>
+  <line x1="620" y1="222" x2="584" y2="222" stroke="#ffcc66" stroke-width="2"/>
+  <polygon points="584,222 592,218 592,226" fill="#ffcc66"/>
+
+  <!-- container sits on kernel -->
+  <line x1="440" y1="420" x2="440" y2="448" stroke="#6b7686" stroke-width="2" stroke-dasharray="4 3"/>
+</svg></figure><p class="caption">The container in the middle is a single process. The left box is what the kernel lets it see; the right box is what the kernel lets it use; the strip at the bottom is the filesystem it gets handed. Remove all three wrappers and you're left with <code>postgres</code> running on the host like any other program.</p>
+<h3>How the layers actually get run: the daemon chain</h3>
+<p>When you type <code>docker run</code>, a relay race kicks off. Worth knowing, because when something hangs you'll want to know which runner dropped the baton.</p>
+<figure class="viz"><svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The Docker daemon chain from CLI to kernel">
+  <title>What happens when you type docker run: CLI to daemon to runtime to kernel</title>
+  <rect width="900" height="250" fill="#0c0f14"/>
+  <text x="40" y="42" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" fill="#d7e0ea">What "docker run" sets in motion</text>
+
+  <g font-family="ui-monospace, Menlo, monospace">
+  <rect x="30" y="80" width="150" height="90" rx="10" fill="#131820" stroke="#36f1a6"/>
+  <text x="105" y="118" text-anchor="middle" font-size="13" fill="#36f1a6">docker</text>
+  <text x="105" y="140" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">CLI — sends your</text>
+  <text x="105" y="153" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">request to the API</text>
+
+  <rect x="220" y="80" width="150" height="90" rx="10" fill="#131820" stroke="#19c3ff"/>
+  <text x="295" y="118" text-anchor="middle" font-size="13" fill="#19c3ff">dockerd</text>
+  <text x="295" y="140" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">the Engine daemon —</text>
+  <text x="295" y="153" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">images, networks, API</text>
+
+  <rect x="410" y="80" width="150" height="90" rx="10" fill="#131820" stroke="#19c3ff"/>
+  <text x="485" y="118" text-anchor="middle" font-size="12" fill="#19c3ff">containerd</text>
+  <text x="485" y="140" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">runtime — pulls layers,</text>
+  <text x="485" y="153" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">manages lifecycle</text>
+
+  <rect x="600" y="80" width="150" height="90" rx="10" fill="#131820" stroke="#c77dff"/>
+  <text x="675" y="118" text-anchor="middle" font-size="13" fill="#c77dff">runc</text>
+  <text x="675" y="140" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">sets up ns + cgroups,</text>
+  <text x="675" y="153" text-anchor="middle" font-size="9.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">then execs your code</text>
+
+  <rect x="790" y="80" width="80" height="90" rx="10" fill="#0f1722" stroke="#ffcc66"/>
+  <text x="830" y="114" text-anchor="middle" font-size="12" fill="#ffcc66">kernel</text>
+  <text x="830" y="136" text-anchor="middle" font-size="8.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">clone()</text>
+  <text x="830" y="149" text-anchor="middle" font-size="8.5" fill="#6b7686" font-family="ui-sans-serif, sans-serif">unshare()</text>
+  </g>
+
+  <g stroke-width="2">
+  <line x1="180" y1="125" x2="216" y2="125" stroke="#6b7686"/><polygon points="216,125 208,121 208,129" fill="#6b7686"/>
+  <line x1="370" y1="125" x2="406" y2="125" stroke="#6b7686"/><polygon points="406,125 398,121 398,129" fill="#6b7686"/>
+  <line x1="560" y1="125" x2="596" y2="125" stroke="#6b7686"/><polygon points="596,125 588,121 588,129" fill="#6b7686"/>
+  <line x1="750" y1="125" x2="786" y2="125" stroke="#6b7686"/><polygon points="786,125 778,121 778,129" fill="#6b7686"/>
+  </g>
+
+  <text x="40" y="212" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#6b7686">runc does its setup and exits. Your process is then a plain child of a lightweight shim — which is why containers keep running even if you restart dockerd.</text>
+</svg></figure><p class="caption">The CLI is a thin client. <code>dockerd</code> is the brain. <code>containerd</code> runs the lifecycle, <code>runc</code> does the actual kernel syscalls to build the sandbox, then steps aside. Knowing this chain tells you where to look when a container won't start versus when the daemon itself is wedged.</p>
+<hr />
+<h2>The unlock that makes porting make sense</h2>
+<p>Here's the misconception that wrecks migrations, stated plainly so you never fall for it again:</p>
+<blockquote class="callout unlock">
+<p><strong>🔓 Unlock — The data isn't in the image. It's in the writable layer or a volume.</strong>
+Everything your container <em>writes</em> after it starts — database rows, uploaded files, logs, generated config — goes into the thin writable layer or into a mounted volume, <strong>never</strong> back into the read-only image. Pull the same <code>postgres:16</code> image on a fresh machine and you get an empty database. The image is the install media, not the saved game.</p>
+</blockquote>
+<p>This is by design, and it's the single most important fact for porting. The image is reproducible and cheap to move — it's already on a registry, or you can rebuild it from a Dockerfile. The <strong>data</strong> is precious, unique, and Docker will not move it for you unless you explicitly tell it to.</p>
+<p>That's why best practice is to keep important data in a <strong>named volume</strong> rather than letting it accumulate in the disposable writable layer. A <strong>volume</strong> is a directory Docker manages (under <code>/var/lib/docker/volumes/</code> on the host) and mounts into the container. It outlives the container. Delete and recreate the container a hundred times; the named volume stays. That persistence is exactly what you back up and carry to the new host.</p>
+<figure class="viz"><svg viewBox="0 0 780 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OverlayFS layers and copy-on-write">
+  <title>How OverlayFS stacks layers and copies files up on write</title>
+  <rect width="780" height="470" fill="#0c0f14"/>
+  <text x="40" y="44" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#d7e0ea">The layer cake — and copy-on-write</text>
+  <text x="40" y="68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" fill="#6b7686">Reads scan top-down. Writes only ever touch the thin layer on top.</text>
+
+  <!-- writable layer -->
+  <rect x="60" y="100" width="380" height="56" rx="6" fill="#241a2e" stroke="#c77dff" stroke-width="2"/>
+  <text x="76" y="125" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#c77dff">writable container layer</text>
+  <text x="76" y="144" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" fill="#9a7fc7">read-write · exists only while this container lives · lost on rm</text>
+
+  <!-- ro layers -->
+  <rect x="60" y="168" width="380" height="40" rx="6" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="76" y="193" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">layer 3 — COPY app code</text>
+  <rect x="60" y="216" width="380" height="40" rx="6" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="76" y="241" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">layer 2 — RUN apt install libpq</text>
+  <rect x="60" y="264" width="380" height="40" rx="6" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="76" y="289" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#19c3ff">layer 1 — FROM debian:bookworm</text>
+
+  <text x="60" y="338" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" fill="#36f1a6" font-weight="700">read-only — shared by every container from this image</text>
+  <line x1="450" y1="120" x2="450" y2="284" stroke="#232a36" stroke-dasharray="3 3"/>
+  <text x="455" y="124" font-family="ui-sans-serif, sans-serif" font-size="10" fill="#6b7686">merged</text>
+  <text x="455" y="138" font-family="ui-sans-serif, sans-serif" font-size="10" fill="#6b7686">view = your /</text>
+
+  <!-- copy on write panel -->
+  <rect x="500" y="100" width="240" height="240" rx="10" fill="#131820" stroke="#232a36"/>
+  <text x="520" y="126" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffcc66">copy-on-write</text>
+  <text x="520" y="152" font-family="ui-sans-serif, sans-serif" font-size="10.5" fill="#6b7686">edit a file from a lower</text>
+  <text x="520" y="167" font-family="ui-sans-serif, sans-serif" font-size="10.5" fill="#6b7686">read-only layer →</text>
+  <rect x="520" y="182" width="200" height="30" rx="5" fill="#0f1722" stroke="#19c3ff"/>
+  <text x="530" y="201" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#19c3ff">/etc/app.conf (original)</text>
+  <line x1="620" y1="214" x2="620" y2="240" stroke="#ffcc66" stroke-width="2"/>
+  <polygon points="620,240 616,232 624,232" fill="#ffcc66"/>
+  <text x="628" y="232" font-family="ui-sans-serif, sans-serif" font-size="9" fill="#ffcc66">copied up</text>
+  <rect x="520" y="244" width="200" height="30" rx="5" fill="#241a2e" stroke="#c77dff"/>
+  <text x="530" y="263" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#c77dff">/etc/app.conf (your edit)</text>
+  <text x="520" y="300" font-family="ui-sans-serif, sans-serif" font-size="10" fill="#6b7686">The base layer is untouched.</text>
+  <text x="520" y="315" font-family="ui-sans-serif, sans-serif" font-size="10" fill="#6b7686">Your change is the container's</text>
+  <text x="520" y="330" font-family="ui-sans-serif, sans-serif" font-size="10" fill="#6b7686">alone — and dies with it.</text>
+
+  <text x="40" y="392" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700" fill="#d7e0ea">This is why the image is portable and the writable layer is not.</text>
+  <text x="40" y="414" font-family="ui-sans-serif, sans-serif" font-size="12" fill="#6b7686">The bottom three layers are content-addressed and reproducible. The top layer is unique, ephemeral, and tied to one</text>
+  <text x="40" y="432" font-family="ui-sans-serif, sans-serif" font-size="12" fill="#6b7686">running container. Persist anything you care about into a named volume, which sits entirely outside this cake.</text>
+</svg></figure><p class="caption">Copy-on-write means writes never mutate the shared image — they're copied into the container's private top layer. Good for speed and disk use. Dangerous if you assume that top layer is durable. It isn't. That's the whole argument for volumes.</p>
+<hr />
+<h2>How porting actually works — the three levels</h2>
+<h3>What it is (the user's view)</h3>
+<p>"Porting a container to a new host" means: get the same service running on machine B that's running on machine A, with the data intact. Three pieces travel:</p>
+<ol>
+<li><strong>The image</strong> — almost always the easy part.</li>
+<li><strong>The volumes</strong> — the data; the part that actually matters.</li>
+<li><strong>The run configuration</strong> — your <code>docker-compose.yml</code>, environment variables, port mappings, network setup.</li>
+</ol>
+<h3>How it works (the mechanism)</h3>
+<p><strong>Moving the image.</strong> You have three honest options, in order of preference:</p>
+<ul>
+<li><strong>Rebuild from source.</strong> If your image comes from a <code>Dockerfile</code> and a <code>docker-compose.yml</code> checked into git, you don't move the image at all — you <code>git pull</code> on host B and rebuild. Reproducible, version-controlled, no binary blobs flying around.</li>
+<li><strong>Pull from a registry.</strong> A <strong>registry</strong> is a server that stores images (Docker Hub, GitHub Container Registry, a private one). <code>docker push</code> on A, <code>docker pull</code> on B. Clean, and it's how production usually works.</li>
+<li><strong><code>docker save</code> / <code>docker load</code>.</strong> For air-gapped or offline moves. <code>docker save</code> writes the image — all its layers, history, and metadata — to a tar archive. Copy the tar over, <code>docker load</code> reconstructs it. This is a faithful copy of the <em>image</em>.</li>
+</ul>
+<p><strong>Moving the data.</strong> This is the part Docker won't do automatically. The standard, battle-tested move: spin a throwaway helper container that mounts the named volume, <code>tar</code> its contents to an archive, ship the archive to host B over SSH, then reverse the process into a fresh named volume. The Docker docs themselves describe exactly this backup/restore pattern. We'll trace it in a moment.</p>
+<p><strong>Moving the config.</strong> Copy your <code>docker-compose.yml</code> and <code>.env</code>. That's it. (Keep secrets in <code>.env</code>, never baked into the image.)</p>
+<blockquote class="callout warn">
+<p><strong>⚠️ Warning — do not just copy <code>/var/lib/docker</code>.</strong>
+It's tempting to tar the entire Docker data directory and drop it on the new host. It's a footgun. You'll hit storage-driver mismatches, Docker-version incompatibilities, broken layer references, and ownership/permission corruption. The supported, predictable unit of migration is <strong>image + named volume + compose file</strong> — not the daemon's private internal directory. People who copy <code>/var/lib/docker</code> are the ones posting "my migrated volume won't mount" three days later.</p>
+</blockquote>
+<h3>What breaks it (the edge cases experts care about)</h3>
+<p>This is where shallow tutorials stop and real migrations live or die.</p>
+<ul>
+<li><strong>Database file-copy across versions.</strong> A file-level tar of a Postgres or MySQL volume is fast — but the on-disk format is tied to the database's <strong>major version</strong> and sometimes the <strong>CPU architecture</strong>. Tar a Postgres 15 data directory onto a host running the Postgres 16 image and it may refuse to start. For databases, a <strong>logical dump</strong> (<code>pg_dump</code> / <code>mysqldump</code>) is version-portable and arch-portable, at the cost of speed and a brief lock. Pick file-copy for identical engines on identical arches; pick logical dump when anything differs or when you're not certain.</li>
+<li><strong>Hot data is inconsistent data.</strong> Tarring a volume while the database is writing gives you a torn snapshot — half-written pages, an inconsistent state. <strong>Quiesce first</strong>: stop the container (or use the engine's snapshot/backup tooling) before you archive. A backup taken mid-write is a backup you can't trust.</li>
+<li><strong><code>save</code> vs <code>export</code> confusion corrupts your move.</strong> They sound identical and do opposite things. More on this below — get it wrong and you'll lose your entrypoint and your layer history.</li>
+<li><strong>Architecture mismatch.</strong> An image built for <code>linux/amd64</code> won't run on an <code>arm64</code> host (a Raspberry Pi, an Ampere VPS, Apple Silicon). Rebuild for the target arch, or use multi-arch images. <code>save</code>/<code>load</code> faithfully preserves the <em>wrong</em> architecture if that's what you saved.</li>
+<li><strong>Bind mounts vs named volumes.</strong> A <strong>bind mount</strong> maps a specific host path (<code>/home/me/data:/data</code>) into the container. It depends on that path existing on the host. Move to a host without it and the mount is empty or fails. Named volumes are Docker-managed and self-contained — far easier to migrate. Prefer them for anything you'll move.</li>
+<li><strong>Anonymous volumes vanish.</strong> Volumes created without a name are garbage-collected when you <code>docker compose down -v</code> or run <code>docker volume prune</code>. If your data ended up in an anonymous volume, a routine cleanup can silently destroy it before you ever migrate.</li>
+</ul>
+<blockquote class="callout unlock">
+<p><strong>🔓 Unlock — <code>docker save</code> and <code>docker export</code> are opposites, not synonyms.</strong>
+<code>save</code> operates on an <strong>image</strong> and preserves every layer, the build history, and the metadata (your <code>CMD</code>, <code>ENTRYPOINT</code>, <code>ENV</code>). <code>export</code> operates on a <strong>container</strong> and flattens its filesystem into a single tarball with <strong>no history, no layers, and no entrypoint</strong> — you get the files, but the image forgets how to run itself. Reconstruct with <code>load</code> (for save) or <code>import</code> (for export). Mix them up and your "ported" image launches into nothing.</p>
+</blockquote>
+<figure class="viz"><svg viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Comparison of docker save, export, and commit">
+  <title>save vs export vs commit — what each one keeps and what it is for</title>
+  <rect width="900" height="360" fill="#0c0f14"/>
+  <text x="40" y="42" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#d7e0ea">save · export · commit — they are not the same</text>
+
+  <!-- header row -->
+  <g font-family="ui-sans-serif, system-ui, sans-serif" font-size="11.5" font-weight="700" fill="#6b7686">
+  <text x="240" y="92" text-anchor="middle">operates on</text>
+  <text x="380" y="92" text-anchor="middle">keeps layers + history</text>
+  <text x="540" y="92" text-anchor="middle">keeps CMD / ENV</text>
+  <text x="700" y="92" text-anchor="middle">reverse command</text>
+  <text x="820" y="92" text-anchor="middle">reach for it when…</text>
+  </g>
+  <line x1="40" y1="102" x2="860" y2="102" stroke="#232a36"/>
+
+  <!-- row 1 save -->
+  <rect x="40" y="116" width="150" height="58" rx="8" fill="#0f1722" stroke="#36f1a6"/>
+  <text x="115" y="150" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#36f1a6">docker save</text>
+  <text x="240" y="150" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#d7e0ea">an IMAGE</text>
+  <text x="380" y="150" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#36f1a6">✓ yes</text>
+  <text x="540" y="150" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#36f1a6">✓ yes</text>
+  <text x="700" y="150" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#d7e0ea">docker load</text>
+  <text x="820" y="150" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="9.5" fill="#6b7686">moving an image offline</text>
+
+  <!-- row 2 export -->
+  <rect x="40" y="184" width="150" height="58" rx="8" fill="#0f1722" stroke="#ff5c7a"/>
+  <text x="115" y="218" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#ff5c7a">docker export</text>
+  <text x="240" y="218" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#d7e0ea">a CONTAINER fs</text>
+  <text x="380" y="218" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#ff5c7a">✗ flattened</text>
+  <text x="540" y="218" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#ff5c7a">✗ lost</text>
+  <text x="700" y="218" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#d7e0ea">docker import</text>
+  <text x="820" y="218" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="9.5" fill="#6b7686">grabbing files, not an app</text>
+
+  <!-- row 3 commit -->
+  <rect x="40" y="252" width="150" height="58" rx="8" fill="#0f1722" stroke="#ffcc66"/>
+  <text x="115" y="286" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#ffcc66">docker commit</text>
+  <text x="240" y="286" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#d7e0ea">container → IMAGE</text>
+  <text x="380" y="286" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#36f1a6">✓ yes</text>
+  <text x="540" y="286" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="13" fill="#36f1a6">✓ yes</text>
+  <text x="700" y="286" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="11" fill="#d7e0ea">— (makes an image)</text>
+  <text x="820" y="286" text-anchor="middle" font-family="ui-sans-serif, sans-serif" font-size="9.5" fill="#6b7686">snapshotting a tweak</text>
+
+  <line x1="40" y1="174" x2="860" y2="174" stroke="#232a36"/>
+  <line x1="40" y1="242" x2="860" y2="242" stroke="#232a36"/>
+
+  <text x="40" y="338" font-family="ui-sans-serif, sans-serif" font-size="11.5" fill="#6b7686">None of these move your volumes. For migration you almost always want save/load (or a registry) for the image — and a separate tar for the data.</text>
+</svg></figure><p class="caption">Read it left to right: <code>save</code> is for images and keeps everything; <code>export</code> flattens a container into bare files and throws away its identity; <code>commit</code> snapshots a running container into a new image. Crucially, the last column — not one of them carries your volume data.</p>
+<hr />
+<h2>A worked example: moving a live Postgres from host-a to host-b</h2>
+<p>Real service, real image, real commands. We've got <code>postgres:16</code> running on <strong>host-a</strong> via Compose, persisting to a named volume called <code>pgdata</code>. We want it on <strong>host-b</strong>, rows intact. Build it in small, verifiable steps — confirm each before the next.</p>
+<p>Here's the <code>docker-compose.yml</code> in play on host-a:</p>
+<pre><code class="language-yaml">services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: appdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - &quot;5432:5432&quot;
+
+volumes:
+  pgdata:
+</code></pre>
+<p><strong>Step 1 — confirm what you're actually carrying.</strong> Find the volume and prove the data is there before you touch anything.</p>
+<pre><code class="language-bash"># on host-a
+docker compose exec db psql -U app -d appdb -c &quot;SELECT count(*) FROM orders;&quot;
+# -&gt; count: 48213    (note this number — it's your migration's pass/fail test)
+
+docker volume inspect pgdata
+# confirms the volume exists and where it lives on the host
+</code></pre>
+<p><strong>Step 2 — quiesce, so the snapshot is consistent.</strong> Stop the database before archiving. A backup taken while Postgres is writing is a torn backup.</p>
+<pre><code class="language-bash"># on host-a
+docker compose stop db
+</code></pre>
+<p><strong>Step 3 — tar the named volume with a throwaway helper.</strong> The <code>db</code> container is stopped, so we mount the volume directly by name into a tiny <code>alpine</code> container, archive it, and write the archive to the current directory.</p>
+<pre><code class="language-bash"># on host-a, in a working folder
+docker run --rm \
+  -v pgdata:/from:ro \
+  -v &quot;$(pwd)&quot;:/to \
+  alpine tar czf /to/pgdata.tgz -C /from .
+
+sha256sum pgdata.tgz   # record this; you'll verify it on the far side
+</code></pre>
+<p>What each flag does, since copy-paste teaches nothing: <code>--rm</code> deletes the helper when it exits; <code>-v pgdata:/from:ro</code> mounts your real data volume read-only at <code>/from</code>; <code>-v "$(pwd)":/to</code> mounts your current host folder at <code>/to</code> so the archive lands on the host, not inside the disposable container; <code>tar czf … -C /from .</code> creates a gzipped archive of everything in <code>/from</code>.</p>
+<p><strong>Step 4 — ship the artifacts to host-b, over SSH.</strong> Three files: the data archive, the compose file, the env file. Encrypted transport, not HTTP.</p>
+<pre><code class="language-bash"># on host-a
+scp pgdata.tgz docker-compose.yml .env user@host-b:/srv/appdb/
+</code></pre>
+<p><strong>Step 5 — on host-b, restore the data into a fresh named volume.</strong> Create the volume, verify the archive survived the trip, then unpack into it — again with a throwaway helper.</p>
+<pre><code class="language-bash"># on host-b
+cd /srv/appdb
+sha256sum pgdata.tgz          # must match the hash from step 3
+
+docker volume create pgdata
+
+docker run --rm \
+  -v pgdata:/to \
+  -v &quot;$(pwd)&quot;:/from:ro \
+  alpine sh -c &quot;cd /to &amp;&amp; tar xzf /from/pgdata.tgz&quot;
+</code></pre>
+<p><strong>Step 6 — get the image and start the service.</strong> The image is the easy half — <code>postgres:16</code> pulls straight from the registry on <code>up</code>. No <code>save</code>/<code>load</code> needed because it's a public image.</p>
+<pre><code class="language-bash"># on host-b
+docker compose up -d
+</code></pre>
+<p><strong>Step 7 — verify against your step-1 number.</strong> This is the only test that matters.</p>
+<pre><code class="language-bash"># on host-b
+docker compose exec db psql -U app -d appdb -c &quot;SELECT count(*) FROM orders;&quot;
+# -&gt; count: 48213   ✅  same number. The rows came across. Migration confirmed.
+</code></pre>
+<p>If that count matches, you're done — point your app's DNS or connection string at host-b and decommission host-a. If it doesn't, you have a torn snapshot (you skipped step 2), a version mismatch (host-b isn't running <code>postgres:16</code>), or an extraction-path error — check those three in order.</p>
+<blockquote class="callout note">
+<p><strong>📝 Note — the version-safe alternative.</strong> For a major-version jump or an architecture change, swap steps 2–5 for a logical dump: <code>docker compose exec db pg_dump -U app appdb &gt; appdb.sql</code> on host-a, then <code>psql … &lt; appdb.sql</code> into a fresh container on host-b. Slower, locks briefly, but immune to on-disk format differences. When in doubt about versions, dump.</p>
+</blockquote>
+<hr />
+<h2>The mental model, recapped</h2>
+<p>Picture it as moving house. The <strong>image</strong> is the IKEA catalogue — anyone with the same catalogue assembles identical furniture, so you don't ship furniture, you ship the catalogue page (or just re-download it on arrival). The <strong>container</strong> is the assembled room with you living in it — you can't box up a room mid-dinner and mail it, so you tear it down here and rebuild it there. The <strong>volume</strong> is the box of photo albums and hard drives — irreplaceable, unique to you, and the one thing you personally carry, carefully, by hand.</p>
+<p>Move the catalogue, recreate the room, guard the box of albums. That's the entire discipline of container migration.</p>
+<hr />
+<h2>Exercises</h2>
+<ol>
+<li><strong>Watch the costume go on.</strong> Run <code>docker run -d --name demo --memory=128m --cpus="0.5" nginx</code>, then <code>docker top demo</code> and <code>docker inspect demo</code>. Find the namespace IDs under <code>/proc/&lt;pid&gt;/ns/</code> on the host and confirm they differ from your shell's. You're looking at the walls.</li>
+<li><strong>Prove the writable layer is ephemeral.</strong> Run a container, <code>docker exec</code> in, create <code>/tmp/iwashere</code>. <code>docker commit</code> it to a new image, then <code>docker run</code> that new image and confirm the file is there — but start the <em>original</em> image fresh and confirm it isn't. You've just watched data live in the layer, not the image.</li>
+<li><strong>Break it on purpose.</strong> <code>docker export</code> a running container to a tar, <code>docker import</code> it back, then try to <code>docker run</code> the imported image with no command. Watch it fail for lack of an entrypoint. Now do the same with <code>save</code>/<code>load</code> and watch it run. Feel the difference the unlock described.</li>
+<li><strong>Migrate a real volume locally.</strong> Stand up the <code>postgres:16</code> Compose file above, insert a few rows, then follow the worked example to tar <code>pgdata</code>, recreate it under a new volume name, and start a second stack pointing at it. Verify your row count survives.</li>
+<li><strong>Make a database survive a version jump.</strong> Take that same Postgres data and move it via <code>pg_dump</code>/<code>psql</code> into a <code>postgres:17</code> container. Then try the raw file-copy method into <code>postgres:17</code> and document what happens. Now you'll never guess which method to use again.</li>
+<li><strong>Find your anonymous volumes.</strong> Run <code>docker volume ls -f dangling=true</code> on a host you've used for a while. Anything important in there is one <code>docker volume prune</code> away from gone. Decide what should be a named volume instead.</li>
+</ol>
+<hr />
+<h2>Cheat sheet</h2>
+<pre><code class="language-text">WHAT A CONTAINER IS
+  one host process + namespaces (what it sees) + cgroups (what it uses) + overlayfs (its root)
+  shares the host kernel — no guest OS, no hypervisor
+
+WHAT PERSISTS WHERE
+  image            read-only layers, reproducible, portable
+  writable layer   per-container, ephemeral, DIES on rm — don't keep data here
+  named volume     Docker-managed, outlives the container — keep data HERE
+
+MOVE THE IMAGE (pick one)
+  rebuild     git pull + docker compose build           # best: reproducible
+  registry    docker push  /  docker pull               # production default
+  offline     docker save img -o img.tar  -&gt;  docker load -i img.tar
+
+MOVE THE DATA (Docker won't do it for you)
+  backup    docker run --rm -v VOL:/from:ro -v &quot;$PWD&quot;:/to alpine tar czf /to/VOL.tgz -C /from .
+  ship      scp VOL.tgz user@host-b:/path/        # + compose.yml + .env
+  restore   docker volume create VOL
+            docker run --rm -v VOL:/to -v &quot;$PWD&quot;:/from:ro alpine sh -c &quot;cd /to &amp;&amp; tar xzf /from/VOL.tgz&quot;
+  databases prefer pg_dump / mysqldump across version or arch changes
+
+save  vs  export        save = image (layers+history+CMD) | export = flat container fs (no history)
+load  vs  import        load  reverses save              | import reverses export
+
+NEVER
+  copy /var/lib/docker between hosts        # storage-driver / version / ownership footguns
+  tar a volume while the DB is writing       # torn snapshot — stop the container first
+  bake secrets into the image                # keep them in .env / secrets
+</code></pre>
+<hr />
+<h2>Glossary</h2>
+<ul>
+<li><strong>Kernel</strong> — the core of the OS that talks to hardware and allocates resources. Containers share the host's kernel.</li>
+<li><strong>Process</strong> — a running instance of a program, identified by a PID. A container is a process with restrictions applied.</li>
+<li><strong>Namespace</strong> — a kernel feature giving a process a private view of a global resource (processes, network, mounts, hostname, IPC, users). Controls what a container can <em>see</em>.</li>
+<li><strong>cgroup (control group)</strong> — a kernel feature that caps and accounts for resource use (CPU, memory, I/O). Controls what a container can <em>use</em>.</li>
+<li><strong>Union filesystem / OverlayFS</strong> — stacks read-only directories plus one writable directory into a single merged filesystem. How an image becomes a container's root.</li>
+<li><strong>Layer</strong> — one read-only slice of an image, produced by one build step. Layers are shared across images and containers to save space.</li>
+<li><strong>Copy-on-write</strong> — modifying a file from a read-only layer copies it into the writable layer first; the original is never touched.</li>
+<li><strong>Image</strong> — a stack of read-only layers plus metadata (its <code>CMD</code>, <code>ENV</code>, etc.). The reproducible, portable blueprint for containers.</li>
+<li><strong>Container</strong> — a running (or stopped) instance of an image: the host process with its namespaces, cgroups, and overlay mount.</li>
+<li><strong>Writable layer</strong> — the thin read-write layer on top of a running container. Ephemeral; destroyed when the container is removed.</li>
+<li><strong>Volume</strong> — host storage managed by Docker and mounted into a container; persists independently of the container. <strong>Named volume</strong> has an explicit name; <strong>anonymous volume</strong> is auto-named and easily pruned.</li>
+<li><strong>Bind mount</strong> — a specific host path mounted into a container; depends on that path existing on the host.</li>
+<li><strong>Registry</strong> — a server that stores and distributes images (Docker Hub, GHCR, private registries) via push/pull.</li>
+<li><strong><code>dockerd</code> / <code>containerd</code> / <code>runc</code></strong> — the daemon, the runtime, and the low-level tool that respectively expose the API, manage container lifecycle, and make the kernel syscalls that build the sandbox.</li>
+<li><strong>OCI (Open Container Initiative)</strong> — the standards body whose image, runtime, and distribution specs let images built by Docker run under other runtimes like Podman.</li>
+</ul>
+<hr />
+<h2>Sources</h2>
+<ul>
+<li>Docker Docs — <em>Volumes</em> (backup, restore, and migrate patterns): https://docs.docker.com/engine/storage/volumes/</li>
+<li>Docker Docs — <em>Storage drivers / overlayfs</em>: https://docs.docker.com/engine/storage/drivers/overlayfs-driver/</li>
+<li>Docker Docs — <em>docker save</em> / <em>docker load</em> / <em>docker export</em> / <em>docker import</em> references: https://docs.docker.com/reference/cli/docker/image/save/</li>
+<li>moby/docker-image-spec — the image format used by Docker Engine: https://github.com/moby/docker-image-spec</li>
+<li>OCI Image Format Specification (v1.1.0): https://github.com/opencontainers/image-spec</li>
+<li>Open Container Initiative — runtime, image, and distribution specs: https://opencontainers.org/</li>
+<li>Linux kernel docs — <em>namespaces overview</em>: https://man7.org/linux/man-pages/man7/namespaces.7.html</li>
+<li>Linux kernel docs — <em>cgroups v2</em>: https://docs.kernel.org/admin-guide/cgroup-v2.html</li>
+</ul>
+<hr />
+<p>Now go trace it on your own machine. Stand up the Postgres stack, count the rows, and move it. The first time the count comes back identical on the far side, you'll stop thinking of containers as magic boxes and start seeing them for what they are: a process, a blueprint, and a box of albums you carry yourself.</p><footer class="colophon"><div class="rule"></div><p class="sig">Written by <strong>Ajai Raj</strong></p><p class="product">A product of <a href="https://iolinked.com">iolinked.com</a></p><p class="copy">&copy; 2026 Ajai Raj &middot; iolinked.com &mdash; all rights reserved</p></footer>
+  </main>
+</body>
+</html>
