@@ -2,7 +2,7 @@
 
 A first-principles explainer on what a container *actually is* at the kernel level, why "moving a container" is the wrong mental model, and the exact, repeatable way to lift a running service onto another host **without losing your data**.
 
-**🔗 Read it live:** https://ajairajofficial.github.io/Docker-explainer
+**🔗 Read it live:** https://ajairajofficial.com/docker/
 
 
 
